@@ -2,3 +2,13 @@
 PyYAML>=6.0.1
 Pillow>=10.0.0
 tqdm>=4.66.0
+imagehash>=4.3.0
+fiftyone>=1.22.0
+opencv-python-headless>=4.10.0
+reportlab>=4.2.0
+pytest>=8.0.0
+ultralytics>=8.3.0
+lapx>=0.5.12
+torchvision>=0.26.0
+streamlit>=1.40.0
+fonttools>=4.50.0

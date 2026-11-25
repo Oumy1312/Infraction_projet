@@ -1,0 +1,27 @@
+source_names:
+- car
+- threewheel
+- bus
+- truck
+- motorbike
+- van
+keep:
+  car: 0
+  bus: 1
+  truck: 2
+  motorcycle: 3
+source_to_target:
+  '0': 0
+  '2': 1
+  '3': 2
+  '4': 3
+  '5': 0
+van_to_car: true
+excluded_if_present:
+  threewheel: 1
+target_names:
+- car
+- bus
+- truck
+- motorcycle
+note: Une image qui contient threewheel est retirée entière. van devient car.

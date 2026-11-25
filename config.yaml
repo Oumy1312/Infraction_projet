@@ -1,0 +1,28 @@
+# Seuils OpenCV : teinte 0-179, saturation et valeur 0-255.
+# Point de départ pour un feu vu de face. À ajuster sur des images réelles.
+feu:
+  min_ratio: 0.08
+  rouge:
+    hue:
+      - [0, 10]
+      - [160, 179]
+    sat_min: 90
+    val_min: 80
+  orange:
+    hue:
+      - [12, 32]
+    sat_min: 90
+    val_min: 80
+  vert:
+    hue:
+      - [40, 95]
+    sat_min: 60
+    val_min: 60
+
+# Coordonnées normalisées, à régler pour chaque caméra.
+# orange_tolerance_s : un orange qui suit un rouge de moins de N secondes
+# est encore traité comme un rouge pour le franchissement. 0 désactive cela.
+scene:
+  stop_line: [0.0, 0.62, 1.0, 0.62]
+  feu_zone: [0.45, 0.05, 0.55, 0.25]
+  orange_tolerance_s: 1.0

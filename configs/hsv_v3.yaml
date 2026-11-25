@@ -1,0 +1,26 @@
+# Bande douteuse fixée à l'avance : teintes 11 à 21, jamais classées rouge.
+# La justification chiffrée est dans reports/fusion_feu.md et vient
+# uniquement du jeu d'ajustement. config.yaml n'est pas modifié.
+feu:
+  min_ratio: 0.03
+  rouge:
+    hue:
+      - [0, 10]
+      - [160, 179]
+    sat_min: 60
+    val_min: 80
+  douteux:
+    hue:
+      - [11, 21]
+    sat_min: 60
+    val_min: 80
+  orange:
+    hue:
+      - [22, 32]
+    sat_min: 60
+    val_min: 80
+  vert:
+    hue:
+      - [40, 95]
+    sat_min: 30
+    val_min: 60

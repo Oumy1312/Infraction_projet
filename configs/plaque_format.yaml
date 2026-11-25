@@ -1,0 +1,68 @@
+# Proposition non confirmée. Chaque valeur porte le statut « À VALIDER ».
+# Le générateur (scripts/04_synth_plates.py) et la regex (src/ocr_plaque.py)
+# lisent uniquement ce fichier.
+#
+# Structure déjà proposée, et seulement celle-là : de gauche à droite,
+# 1 à 5 chiffres, une lettre arabe, puis un code de préfecture de 1 ou 2 chiffres.
+# L'inventaire des lettres n'avait pas été fixé : la liste ci-dessous est une
+# proposition, pas un relevé des plaques du jeu. Les cyclomoteurs ne sont pas décrits.
+
+chiffres_serie:
+  min:
+    valeur: 1
+    statut: "À VALIDER"
+  max:
+    valeur: 5
+    statut: "À VALIDER"
+  glyphes:
+    valeur: "0123456789"
+    statut: "À VALIDER"
+  zeros_a_gauche:
+    valeur: false
+    statut: "À VALIDER"
+
+lettre:
+  nombre:
+    valeur: 1
+    statut: "À VALIDER"
+  ensemble:
+    valeur: "أبجدهوزحطيكلمنسعفصقرشتثخذضظغ"
+    statut: "À VALIDER"
+
+chiffres_prefecture:
+  min:
+    valeur: 1
+    statut: "À VALIDER"
+  max:
+    valeur: 2
+    statut: "À VALIDER"
+  glyphes:
+    valeur: "0123456789"
+    statut: "À VALIDER"
+  liste_fermee:
+    valeur: false
+    statut: "À VALIDER"
+
+ordre_affichage:
+  valeur: [chiffres_serie, lettre, chiffres_prefecture]
+  statut: "À VALIDER"
+
+separateurs:
+  valeur: [" ", " "]
+  statut: "À VALIDER"
+
+sens:
+  valeur: gauche_a_droite
+  statut: "À VALIDER"
+
+trait_vertical:
+  valeur: false
+  statut: "À VALIDER"
+
+fond:
+  valeur: clair
+  statut: "À VALIDER"
+
+cyclomoteur:
+  valeur: non_decrit
+  statut: "À VALIDER"

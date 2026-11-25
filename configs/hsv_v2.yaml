@@ -1,0 +1,20 @@
+# Seuils proposés sur les 70 % d'ajustement. config.yaml n'est pas modifié.
+# Évalués une seule fois sur les 30 % tenus à part.
+feu:
+  min_ratio: 0.03
+  rouge:
+    hue:
+      - [0, 20]
+      - [160, 179]
+    sat_min: 60
+    val_min: 80
+  orange:
+    hue:
+      - [22, 32]
+    sat_min: 60
+    val_min: 80
+  vert:
+    hue:
+      - [40, 95]
+    sat_min: 30
+    val_min: 60

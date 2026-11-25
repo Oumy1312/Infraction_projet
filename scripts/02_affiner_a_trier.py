@@ -92,6 +92,7 @@ class Measure:
     distance_plates: float | None = None
     distance_lights: float | None = None
     contradiction: str = ""
+    revised: str = ""
 
     @property
     def resolution(self) -> str:
@@ -112,6 +113,81 @@ def prefix_of(filename: str) -> str:
         if other >= 0:
             return f"(sans {RF_MOTIF}) {filename[:other]}"
     return f"(sans {RF_MOTIF}) {Path(filename).stem}"
+
+
+def family_of(prefix: str) -> str:
+    name = prefix
+    if name.startswith("(sans "):
+        pieces = name.split(") ", 1)
+        name = pieces[1] if len(pieces) == 2 else name
+    low = name.lower()
+    if name.isdigit():
+        return f"id_{len(name)}_chiffres"
+    if "ma-2014-moped" in low:
+        return "MA-2014-moped"
+    if low.startswith("ma_moped") or low.startswith("ma-moped"):
+        return "MA_Moped"
+    if "license_plate" in low:
+        return "Morocco_license_plate"
+    if low.startswith("marokko"):
+        return "marokko"
+    if low.startswith("morocco"):
+        return "morocco"
+    if low.startswith("unnamed"):
+        return "unnamed"
+    if low.startswith("downlo"):
+        return "download"
+    if low.startswith("auto-ecole"):
+        return "auto-ecole"
+    if len(name) > 1 and low.startswith("t") and name[1:].isdigit():
+        return "T"
+    if low.startswith("ma_"):
+        return "ma_"
+    return name[:40]
+
+
+REVISED_THRESHOLD = 0.70
+
+
+def revised_category(item: Measure, threshold: float = REVISED_THRESHOLD) -> str:
+    """Seuil sur la médiane du fichier. Au-dessus, le fichier est une plaque."""
+    if item.ratio is None:
+        return "incertain"
+    if item.ratio <= threshold:
+        return "traffic_lights"
+    return "plates_detection"
+
+
+def write_histogram(bin_counts: list[int], destination: Path) -> None:
+    bins = len(bin_counts)
+    bar_w, gap = 16, 3
+    left, top, bottom = 64, 48, 70
+    plot_h = 360
+    width = left + bins * (bar_w + gap) + 24
+    height = top + plot_h + bottom
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    title_font = REORG.font(16)
+    small = REORG.font(11)
+    peak = max(bin_counts) or 1
+    draw.text(
+        (left, 12),
+        "Boîtes de classe 0 dans _a_trier — rapport largeur/hauteur",
+        fill=(20, 20, 20),
+        font=title_font,
+    )
+    base = top + plot_h
+    draw.line((left, top, left, base), fill=(40, 40, 40))
+    draw.line((left, base, width - 12, base), fill=(40, 40, 40))
+    for index, count in enumerate(bin_counts):
+        x = left + 8 + index * (bar_w + gap)
+        bar_h = int(plot_h * count / peak)
+        draw.rectangle((x, base - bar_h, x + bar_w, base), fill=(36, 99, 168))
+        if index % 5 == 0:
+            draw.text((x, base + 6), f"{index / 10:.1f}", fill=(20, 20, 20), font=small)
+    draw.text((8, top), str(peak), fill=(20, 20, 20), font=small)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    image.save(destination)
 
 
 def median(values: list[float]) -> float | None:
@@ -347,6 +423,22 @@ def describe_dataset(src: Path) -> list[str]:
     return lines
 
 
+PREDICTED_LABEL = {
+    "plates_detection": ("prévu : plaque", (255, 140, 40)),
+    "traffic_lights": ("prévu : feu", (40, 190, 70)),
+    "incertain": ("prévu : incertain", (240, 180, 0)),
+}
+
+
+def choose_records(records: list[Measure], sample_size: int, seed: int, ranked: bool) -> list[Measure]:
+    usable = [item for item in records if item.image is not None and item.image.is_file()]
+    if ranked:
+        return usable[:sample_size]
+    if len(usable) <= sample_size:
+        return usable
+    return random.Random(seed).sample(usable, sample_size)
+
+
 def write_contact(
     title: str,
     records: list[Measure],
@@ -355,16 +447,53 @@ def write_contact(
     rule_line: str,
     destination: Path,
     ranked: bool,
+    use_revised: bool = False,
 ) -> Path | None:
+    chosen = choose_records(records, sample_size, seed, ranked)
+    if not chosen:
+        return None
+    return draw_sheet(title, records, chosen, rule_line, destination, use_revised)
+
+
+def write_pages(
+    title: str,
+    records: list[Measure],
+    page_size: int,
+    rule_line: str,
+    stem: Path,
+    use_revised: bool = False,
+) -> list[Path]:
     usable = [item for item in records if item.image is not None and item.image.is_file()]
     if not usable:
+        return []
+    paths: list[Path] = []
+    chunks = [usable[index:index + page_size] for index in range(0, len(usable), page_size)]
+    for page, chosen in enumerate(chunks, start=1):
+        suffix = "" if len(chunks) == 1 else f"_p{page:02d}"
+        destination = stem.parent / f"{stem.name}{suffix}.jpg"
+        drawn = draw_sheet(
+            f"{title}   page {page}/{len(chunks)}",
+            records,
+            chosen,
+            rule_line,
+            destination,
+            use_revised,
+        )
+        if drawn is not None:
+            paths.append(drawn)
+    return paths
+
+
+def draw_sheet(
+    title: str,
+    records: list[Measure],
+    chosen: list[Measure],
+    rule_line: str,
+    destination: Path,
+    use_revised: bool = False,
+) -> Path | None:
+    if not chosen:
         return None
-    if ranked:
-        chosen = usable[:sample_size]
-    elif len(usable) <= sample_size:
-        chosen = usable
-    else:
-        chosen = random.Random(seed).sample(usable, sample_size)
     columns = 5
     rows = (len(chosen) + columns - 1) // columns
     cell_w, cell_h = 320, 260
@@ -394,17 +523,25 @@ def write_contact(
         try:
             with Image.open(item.image) as image:
                 annotated = REORG.draw_annotation(image, item.label)
-            sheet.paste(REORG.fit_cell(annotated, cell_w, cell_h), (origin_x, origin_y))
+            cell = REORG.fit_cell(annotated, cell_w, cell_h)
+            sheet.paste(cell, (origin_x, origin_y))
         except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
             draw.rectangle([origin_x, origin_y, origin_x + cell_w, origin_y + cell_h], outline=(180, 60, 60))
+        shown = item.revised if use_revised and item.revised else item.category
+        label_text, label_color = PREDICTED_LABEL.get(shown, (shown, (200, 200, 200)))
+        draw.rectangle([origin_x, origin_y, origin_x + cell_w, origin_y + 22], fill=label_color)
+        draw.text((origin_x + 6, origin_y + 3), label_text, fill=(12, 12, 12), font=small_font)
         caption = item.image.name if item.image else item.label.name
         if len(caption) > 42:
             caption = caption[:18] + "…" + caption[-18:]
         draw.text((origin_x + 4, origin_y + cell_h + 2), caption, fill=(220, 220, 220), font=small_font)
-        score = "" if item.ambiguity is None else f"  amb={item.ambiguity:.2f}"
+        former = ""
+        if use_revised and item.revised and item.revised != item.category:
+            former_text = PREDICTED_LABEL.get(item.category, (item.category, (200, 200, 200)))[0]
+            former = f"  (était {former_text})"
         draw.text(
             (origin_x + 4, origin_y + cell_h + 20),
-            f"{item.format_name}  l/h={fmt(item.ratio, 2)}  aire={fmt(item.area, 4)}{score}",
+            f"{item.format_name}  l/h={fmt(item.ratio, 2)}  aire={fmt(item.area, 4)}  {label_text}{former}",
             fill=(180, 180, 180),
             font=small_font,
         )
@@ -542,6 +679,175 @@ def main(argv: list[str] | None = None) -> int:
     if ambigus_path is not None:
         sheets.append(ambigus_path)
 
+    light_area_p90 = percentile(light_areas, 0.90) or light_area
+    wide_reference = sum(1 for ratio in light_ratios if ratio > threshold_low)
+    horizontal_reference = sum(1 for ratio in light_ratios if ratio >= 1.0)
+    band = sorted(
+        (item for item in measures if item.ratio is not None and 0.9 <= item.ratio <= 1.3),
+        key=lambda item: (item.ratio or 0, REORG.relposix(item.label, src)),
+    )
+    uncertain_items = [item for item in measures if item.category == "incertain"]
+    horizontal_risks = []
+    for item in measures:
+        if item.category != "plates_detection" or item.ratio is None:
+            continue
+        small_wide = any(
+            box.ratio is not None and box.area is not None
+            and threshold_low < box.ratio <= 2.5
+            and box.area <= light_area_p90
+            for box in item.boxes
+        )
+        s2tld_name = bool(re.fullmatch(r"\d{1,6}", item.prefix)) or item.prefix.startswith("2020-")
+        if small_wide or (s2tld_name and item.ratio <= 2.5):
+            horizontal_risks.append(item)
+    horizontal_risks.sort(key=lambda item: (item.ratio or 0, REORG.relposix(item.label, src)))
+
+    verif_rule = "Contrôle avant application. Boîtes dessinées, classe prévue affichée. Aucune copie."
+    for category in ("plates_detection", "traffic_lights", "incertain"):
+        subset = [item for item in measures if item.category == category]
+        path = write_contact(
+            f"contrôle {category}",
+            subset,
+            max(args.contact, 40),
+            args.seed,
+            verif_rule,
+            REPORTS / f"contact_verif_{category}.jpg",
+            ranked=False,
+        )
+        if path is not None:
+            sheets.append(path)
+    sheets.extend(write_pages(
+        "l/h entre 0,9 et 1,3",
+        band,
+        40,
+        verif_rule,
+        REPORTS / "contact_verif_ratio_09_13",
+    ))
+    sheets.extend(write_pages(
+        "10 incertains",
+        uncertain_items,
+        40,
+        verif_rule,
+        REPORTS / "contact_verif_incertains",
+    ))
+    sheets.extend(write_pages(
+        "feux horizontaux possibles classés plaques",
+        horizontal_risks,
+        40,
+        verif_rule,
+        REPORTS / "contact_verif_feux_horizontaux",
+    ))
+    band_low = sorted(
+        (item for item in measures if item.ratio is not None and 0.6 <= item.ratio <= 0.9),
+        key=lambda item: (item.ratio or 0, REORG.relposix(item.label, src)),
+    )
+    if len(band_low) <= 60:
+        band_low_shown = band_low
+        band_low_note = f"toutes les {len(band_low)} images"
+    else:
+        picker = random.Random(args.seed)
+        band_low_shown = sorted(picker.sample(band_low, 60), key=lambda item: (item.ratio or 0, REORG.relposix(item.label, src)))
+        band_low_note = f"60 images au hasard sur {len(band_low)}, graine {args.seed}"
+    sheets.extend(write_pages(
+        f"l/h entre 0,6 et 0,9 ({band_low_note})",
+        band_low_shown,
+        40,
+        verif_rule,
+        REPORTS / "contact_verif_ratio_06_09",
+    ))
+
+    box_ratios = [
+        box.ratio
+        for item in measures
+        for box in item.boxes
+        if box.class_id == 0 and box.ratio is not None
+    ]
+    hist_bins = 60
+    hist_counts = [0] * hist_bins
+    above_six = 0
+    for ratio in box_ratios:
+        if ratio > 6:
+            above_six += 1
+            continue
+        index = 59 if ratio == 6 else int(ratio / 0.1)
+        if 0 <= index < hist_bins:
+            hist_counts[index] += 1
+    hist_path = REPORTS / "hist_ratio.png"
+    write_histogram(hist_counts, hist_path)
+
+    file_ratios = sorted(item.ratio for item in measures if item.ratio is not None)
+    light_file_max = max((item.ratio for item in measures if item.prefix.isdigit() and len(item.prefix) == 6 and item.ratio is not None), default=None)
+    other_file_min = min((item.ratio for item in measures if not (item.prefix.isdigit() and len(item.prefix) == 6) and item.ratio is not None), default=None)
+
+    for item in measures:
+        item.revised = revised_category(item)
+    revised_counts = Counter(item.revised for item in measures)
+    changed = sorted(
+        (item for item in measures if item.revised != item.category),
+        key=lambda item: (item.category, item.ratio or 0, REORG.relposix(item.label, src)),
+    )
+    revised_rule = (
+        f"Règle révisée, non appliquée. Médiane l/h > {REVISED_THRESHOLD:.2f} → plaque, sinon feu. Aucune copie."
+    )
+    sheets.extend(write_pages(
+        "changent de groupe par rapport à l/h > 1,11",
+        changed,
+        40,
+        revised_rule,
+        REPORTS / "contact_rev_changements",
+        use_revised=True,
+    ))
+    for category in ("plates_detection", "traffic_lights", "incertain"):
+        subset = [item for item in measures if item.revised == category]
+        path = write_contact(
+            f"règle révisée {category}",
+            subset,
+            40,
+            args.seed,
+            revised_rule,
+            REPORTS / f"contact_rev_{category}.jpg",
+            ranked=False,
+            use_revised=True,
+        )
+        if path is not None:
+            sheets.append(path)
+
+    families: dict[str, list[Measure]] = defaultdict(list)
+    for item in measures:
+        families[family_of(item.prefix)].append(item)
+    family_rows = []
+    for family, items in sorted(families.items(), key=lambda pair: (-len(pair[1]), pair[0])):
+        ratios = [item.ratio for item in items if item.ratio is not None]
+        counts = Counter(item.category for item in items)
+        total = len(items)
+        present = [name for name in ("plates_detection", "traffic_lights", "incertain") if counts[name]]
+        if present == ["plates_detection"]:
+            purity = "uniquement plaques"
+        elif present == ["traffic_lights"]:
+            purity = "uniquement feux"
+        elif present == ["incertain"]:
+            purity = "uniquement incertains"
+        else:
+            purity = "mixte"
+        family_rows.append([
+            family,
+            total,
+            fmt(sum(ratios) / len(ratios), 3) if ratios else "",
+            f"{counts['plates_detection']} ({100 * counts['plates_detection'] / total:.0f} %)",
+            f"{counts['traffic_lights']} ({100 * counts['traffic_lights'] / total:.0f} %)",
+            f"{counts['incertain']} ({100 * counts['incertain'] / total:.0f} %)",
+            purity,
+        ])
+    hist_rows = [
+        [f"{index / 10:.1f}–{(index + 1) / 10:.1f}", hist_counts[index]]
+        for index in range(hist_bins)
+    ]
+    hist_rows.append(["> 6", above_six])
+    band_low_counts = Counter(item.category for item in band_low)
+    changed_counts = Counter(f"{item.category} → {item.revised}" for item in changed)
+
+    band_counts = Counter(item.category for item in band)
+
     repeated = [row for row in group_rows if int(row["nb_fichiers"]) >= 2]
     by_resolution: dict[str, list[Measure]] = defaultdict(list)
     for item in measures:
@@ -655,21 +961,101 @@ def main(argv: list[str] | None = None) -> int:
             resolution_rows,
         ),
         "",
+        "## Contrôle avant application",
+        "",
+        "Dry-run : aucune copie. Quarante images aléatoires par catégorie (graine 42), toutes les images dont le rapport l/h est entre 0,9 et 1,3, et les incertains. La classe prévue est écrite sur chaque image.",
+        "",
+        f"- Référence feux : {horizontal_reference} boîtes avec l/h ≥ 1 (boîtier horizontal ou carré), dont {wide_reference} au-dessus du seuil {threshold_low:.3f}. Ces boîtes, si elles étaient seules dans un fichier de classe 0, partiraient en plaques.",
+        f"- Bande 0,9–1,3 : {len(band)} fichiers (plaques {band_counts['plates_detection']}, feux {band_counts['traffic_lights']}, incertains {band_counts['incertain']}).",
+        f"- Risque de feu horizontal classé plaque : {len(horizontal_risks)} fichiers. Critère : proposé en plaques, et soit une boîte de l/h entre le seuil et 2,5 avec une aire ≤ p90 des feux ({light_area_p90:.5f}), soit un nom de type S2TLD avec l/h ≤ 2,5.",
+        "",
         "## Planches",
         "",
-        "Trente images aléatoires par catégorie proposée, graine 42. La planche des ambigus montre les 10 fichiers à la frontière, du plus ambigu au moins ambigu.",
+        "Les planches `contact_regle_` reprennent l'échantillon de la règle. Les planches `contact_verif_` sont le contrôle demandé avant application.",
         "",
     ]
     for path in sheets:
         lines.append(f"- `{path.relative_to(PROJECT_ROOT).as_posix()}`")
-    lines.append("")
+    lines += [
+        "",
+        "## Étape 1b — seuil révisé (non appliqué)",
+        "",
+        "Le seuil l/h > 1,11 n'est pas validé : quatre plaques presque carrées partiraient en feux. Rien n'est copié.",
+        "",
+        "### Histogramme des boîtes de classe 0",
+        "",
+        f"Toutes les boîtes de classe 0 des fichiers de `_a_trier` : {len(box_ratios)} boîtes. Tranches de 0,1, de 0 à 6. Figure : `reports/hist_ratio.png`.",
+        "",
+        markdown_table(["Tranche l/h", "Boîtes"], hist_rows),
+        "",
+        f"- Boîtes au-dessus de 6 : {above_six}.",
+        f"- Médiane de fichier la plus haute parmi les préfixes à 6 chiffres : {fmt(light_file_max, 3)}.",
+        f"- Médiane de fichier la plus basse parmi les autres préfixes : {fmt(other_file_min, 3)}.",
+        f"- Intervalle vide entre ces deux médianes de fichier : {fmt(light_file_max, 3)} à {fmt(other_file_min, 3)}. Aucun fichier n'a sa médiane dans cet intervalle.",
+        "",
+        "### Bande 0,6–0,9",
+        "",
+        f"{len(band_low)} images ont une médiane l/h entre 0,6 et 0,9. Planche : {band_low_note}. Classe affichée = groupe actuel (seuil 1,11).",
+        "",
+        f"- Plaques {band_low_counts['plates_detection']}, feux {band_low_counts['traffic_lights']}, incertains {band_low_counts['incertain']}.",
+        "",
+        "### Préfixe de source",
+        "",
+        "Le préfixe de famille regroupe les noms du même jeu (MA-2014-moped, Morocco_license_plate, marokko, identifiant numérique). Les parts sont celles des groupes actuels, seuil 1,11. Le ratio moyen est la moyenne des médianes de fichier.",
+        "",
+        markdown_table(
+            ["Préfixe", "Fichiers", "l/h moyen", "Plaques", "Feux", "Incertains", "Pureté"],
+            family_rows,
+        ),
+        "",
+        "Un préfixe « uniquement feux » ne contient que des fichiers déjà classés feux. Un préfixe « uniquement plaques » ne contient que des fichiers déjà classés plaques. Les dix incertains sont des plaques au regard des images, mais ils restent dans la colonne Incertains de ce tableau parce que la règle 1,11 ne les a pas encore déplacés.",
+        "",
+        "Le seul préfixe qui ne contient que des feux, une fois les plaques carrées remises à leur place, est `id_6_chiffres` (1 211 fichiers). `Morocco_license_plate` apparaît « uniquement feux » parce que son unique fichier a un l/h de 1,004 et que le seuil 1,11 l'a envoyé en feux : c'est une des quatre plaques presque carrées. `marokko` et `MA-2014-moped` sont mixtes pour la même raison (une ou deux plaques carrées classées feux). `MA_Moped` ne contient que les deux incertains, qui sont des plaques. `id_8_chiffres` est mixte seulement à cause de sept incertains, sans aucun feu.",
+        "",
+        "### Règle révisée proposée",
+        "",
+        f"(a) Nouveau seuil : médiane l/h du fichier **supérieure à {REVISED_THRESHOLD:.2f}** → `plates_detection`, sinon `traffic_lights`. L'histogramme des {len(box_ratios)} boîtes a un vide : aucune boîte entre 0,7 et 0,8. En dessous, 2 279 boîtes (le pic est 0,2–0,3). Au-dessus, les plaques, y compris les presque carrées des tranches 0,8–1,1. Le même vide existe sur les médianes de fichier : les préfixes à 6 chiffres s'arrêtent à {fmt(light_file_max, 3)}, les autres commencent à {fmt(other_file_min, 3)}. Le 0,70 est au milieu. Le 1,11 est trop haut : il coupe dans ces plaques presque carrées et en envoie quatre en feux. Les tranches vides au-delà de 4 sont des plaques larges peu nombreuses, pas un second seuil.",
+        "",
+        "(b) Une règle par préfixe donne exactement le même partage sur ces 1 631 fichiers : identifiant à 6 chiffres → `traffic_lights` ; tout autre préfixe → `plates_detection`. Elle est plus sûre si un futur lot recouvre les rapports, parce qu'elle ne dépend pas d'une plaque carrée ou d'un feu un peu large. Les deux règles sont d'accord aujourd'hui. La règle de préfixe est celle à retenir si une seule règle doit décider.",
+        "",
+        "(c) Nouvelle répartition, non appliquée :",
+        "",
+        markdown_table(
+            ["Catégorie", "Fichiers"],
+            [[name, revised_counts[name]] for name in ("plates_detection", "traffic_lights", "incertain")],
+        ),
+        "",
+        f"Images qui changent de groupe par rapport à l/h > 1,11 : {len(changed)}.",
+        "",
+    ]
+    if changed_counts:
+        lines.append(markdown_table(
+            ["Passage", "Fichiers"],
+            [[name, count] for name, count in sorted(changed_counts.items())],
+        ))
+        lines.append("")
+    lines += [
+        "Les dix fichiers aujourd'hui incertains sont des plaques. Proposition : les envoyer vers `plates_detection`. La conversion polygone → rectangle (min/max des points, normalisé entre 0 et 1) se fera plus tard dans `data/interim/`. Elle n'est pas faite ici. Les originaux restent intacts.",
+        "",
+        "Planches de la règle révisée : toutes les images qui changent de groupe, puis 40 images au hasard (graine 42) par nouveau groupe. Le bandeau indique la nouvelle classe. La légende rappelle l'ancienne quand elle diffère.",
+        "",
+    ]
     lines.extend(describe_dataset(src))
     report = REPORTS / "a_trier_regle.md"
-    report.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    text = "\n".join(str(line) for line in lines) + "\n"
+    with report.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
     print(f"Fichiers : {len(measures)}")
+    print(f"Bande 0,6-0,9 : {len(band_low)}")
+    print(f"Révisé plaques/feux/incertain : {revised_counts['plates_detection']} {revised_counts['traffic_lights']} {revised_counts['incertain']}")
+    print(f"Changements : {len(changed)} {dict(changed_counts)}")
+    empty_bins = [f"{index / 10:.1f}" for index, count in enumerate(hist_counts) if count == 0]
+    print(f"Tranches vides : {', '.join(empty_bins) if empty_bins else 'aucune'}")
     print(f"plates_detection : {by_category['plates_detection']}")
     print(f"traffic_lights : {by_category['traffic_lights']}")
     print(f"incertain : {by_category['incertain']}")
+    print(f"Bande 0,9-1,3 : {len(band)} (plaques {band_counts['plates_detection']}, feux {band_counts['traffic_lights']}, incertains {band_counts['incertain']})")
+    print(f"Feux horizontaux possibles : {len(horizontal_risks)}")
     print(f"Contradictions : {len(contradictions)}")
     print(f"Groupes : {len(group_rows)}")
     print(f"Rapport : {report}")
